@@ -37,7 +37,7 @@ APPDATA_DIR   := EnvGet("APPDATA") "\Fisch Macro Ultimate\Macro"
 CONFIGS_DIR   := APPDATA_DIR "\configs"
 SETTINGS_PATH := APPDATA_DIR "\settings.json"
 UPDATE_VERSION_URL := "https://raw.githubusercontent.com/Topguy42/FischMacroUltimate/main/version.txt"
-UPDATE_DOWNLOAD_URL := "https://raw.githubusercontent.com/Topguy42/FischMacroUltimate/main/FischMacroUltimate.ahk"
+UPDATE_DOWNLOAD_URL := "https://raw.githubusercontent.com/Topguy42/FischMacroUltimate/refs/heads/main/FischMacroUltimate.ahk"
 UPDATE_CHECK_TTL_SEC := 3600
 
 ROD           := ""
