@@ -11,7 +11,7 @@
 ; --- Global initialization (Constants.ahk) ---
 
 MAJOR_VER       := "v1"
-FULL_VER        := "v1.3"
+FULL_VER        := "v1.1"
 ROBLOX_VER      := "version-bf6344c9c23446bf"
 ROBLOX_INSTANCE := "RobloxPlayerBeta.exe"
 H_PROCESS       := 0
@@ -36,8 +36,8 @@ g_CachedHotbarGui      := 0
 APPDATA_DIR   := EnvGet("APPDATA") "\Fisch Macro Ultimate\Macro"
 CONFIGS_DIR   := APPDATA_DIR "\configs"
 SETTINGS_PATH := APPDATA_DIR "\settings.json"
-UPDATE_VERSION_URL := "https://raw.githubusercontent.com/Topguy42/FischMacroUltimate-/main/version.txt"
-UPDATE_DOWNLOAD_URL := "https://github.com/Topguy42/FischMacroUltimate-/releases/download/release/FischMacroUltimate.ahk"
+UPDATE_VERSION_URL := "https://raw.githubusercontent.com/Topguy42/FischMacroUltimate/refs/heads/main/version.txt"
+UPDATE_DOWNLOAD_URL := "https://raw.githubusercontent.com/Topguy42/FischMacroUltimate/refs/heads/main/FischMacroUltimate.ahk"
 UPDATE_CHECK_TTL_SEC := 3600
 
 ROD           := ""
@@ -59,12 +59,16 @@ global Controller := FishingController()
 
 HotkeyManager.RegisterAll(SETTINGS)
 
+OnExit(CleanupAndExit)
+
 try {
     Initialize()
 } catch as err {
     MsgBox(err.Message, "Startup Error")
     ExitApp(1)
 }
+
+RunStartupUpdateCheck()
 
 GetGui()
 
@@ -81,7 +85,7 @@ Initialize() {
     }
 
     SetTimer(MacroLoop, MAIN["update_rate"])
-    SetTimer(RunStartupUpdateCheck, -3000)  ; check for update 3 s after launch
+    SetTimer(CheckRobloxConnection, 5000)   ; auto-reattach if Roblox drops
 }
 
 
@@ -4449,6 +4453,28 @@ FixRoblox() {
     }
 }
 
+CleanupAndExit(exitReason, exitCode) {
+    global H_PROCESS
+    if (H_PROCESS) {
+        DllCall("CloseHandle", "Ptr", H_PROCESS)
+        H_PROCESS := 0
+    }
+}
+
+CheckRobloxConnection() {
+    if IsRobloxAttached()
+        return
+    pid := GetRobloxPID()
+    if (!pid)
+        return
+    try {
+        AttachToRoblox(pid)
+        UpdateRobloxUiState()
+    } catch {
+        ; silently fail — FixRoblox hotkey or next tick will retry
+    }
+}
+
 ReloadMacro() {
     Reload()
 }
@@ -4494,9 +4520,29 @@ class HotkeyManager {
 
 
 LoadOffsets() {
-    parsed := FetchRemoteOffsets()
-    if (!parsed)
-        throw Error("Embedded offsets not found.")
+    global OFFSETS_PATH
+
+    if (!FileExist(OFFSETS_PATH)) {
+        parsed := FetchRemoteOffsets()
+        if (!parsed)
+            throw Error("offsets.json not found at: " OFFSETS_PATH)
+        ApplyParsedOffsets(parsed)
+        BackupAndWriteOffsetsFile(parsed)
+        return
+    }
+
+    try {
+        jsonData := FileRead(OFFSETS_PATH)
+    } catch as err {
+        throw Error("Failed to read offsets.json: " err.Message)
+    }
+
+    try {
+        parsed := JSON.parse(jsonData)
+    } catch as err {
+        throw Error("JSON parsing failed: " err.Message)
+    }
+
     ApplyParsedOffsets(parsed)
 }
 
@@ -4572,17 +4618,18 @@ TestAndHealOffsets() {
 
     parsed := FetchRemoteOffsets()
     if (!parsed)
-        throw Error("Embedded offsets not found.")
+        throw Error("Offsets appear stale and remote update is unreachable. Please retry once online or update offsets.json manually.")
 
     try {
         ApplyParsedOffsets(parsed)
     } catch as err {
-        throw Error("Embedded offsets could not be applied: " err.Message)
+        throw Error("Remote offsets could not be applied: " err.Message)
     }
 
     if (!TestOffsetsInMemory())
-        throw Error("Embedded offsets did not match the running Roblox build.")
+        throw Error("Remote offsets did not match the running Roblox build.")
 
+    BackupAndWriteOffsetsFile(parsed)
     return true
 }
 
@@ -5126,14 +5173,6 @@ BackupAndWriteOffsetsFile(parsed) {
 
     backupPath := OFFSETS_PATH ".bak"
 
-    dir := RegExReplace(OFFSETS_PATH, "\\[^\\]+$")
-    if (!DirExist(dir)) {
-        try {
-            DirCreate(dir)
-        } catch {
-        }
-    }
-
     if (FileExist(OFFSETS_PATH)) {
         try {
             FileCopy(OFFSETS_PATH, backupPath, true)
@@ -5152,24 +5191,7 @@ BackupAndWriteOffsetsFile(parsed) {
 
 GetRobloxPID() {
     global ROBLOX_INSTANCE
-
-    bestPid := 0
-    maxMemory := 0
-
-    try {
-        for proc in ComObjGet("winmgmts:").ExecQuery("Select ProcessId, WorkingSetSize from Win32_Process Where Name = '" ROBLOX_INSTANCE "'") {
-            mem := proc.WorkingSetSize
-            pid := proc.ProcessId
-            if (mem > maxMemory) {
-                maxMemory := mem
-                bestPid := pid
-            }
-        }
-    } catch {
-        return ProcessExist(ROBLOX_INSTANCE)
-    }
-
-    return bestPid ? bestPid : ProcessExist(ROBLOX_INSTANCE)
+    return ProcessExist(ROBLOX_INSTANCE)
 }
 
 GetProcessBase(pid) {
@@ -6134,17 +6156,48 @@ RunStartupUpdateCheck() {
     newVer := CheckForFMUUpdate()
     if (newVer = "")
         return
+    ShowUpdateDialog(newVer)
+}
 
-    result := MsgBox(
-        "A new version of Fisch Macro Ultimate is available!`n`n"
-        "  Current:  " FULL_VER "`n"
-        "  New:      " newVer "`n`n"
-        "Update now? The macro will restart automatically.",
-        "Update Available",
-        "YesNo Icon?"
-    )
+ShowUpdateDialog(newVer) {
+    global FULL_VER, APPEARANCE
 
-    if (result = "Yes")
+    Accent     := APPEARANCE["accent_color"]
+    BgColor    := APPEARANCE["bg_color"]
+    TextColor  := APPEARANCE["text_color"]
+    SubColor   := DimHex(TextColor, 0.6)
+
+    ug := Gui("+AlwaysOnTop +ToolWindow", "Fisch Macro Ultimate — Update Available")
+    ug.BackColor := "0x" BgColor
+    ug.SetFont(, "Segoe UI")
+
+    ug.AddText("x20 y16 w340 h24 c" Accent, "Update Available").SetFont("s13 bold")
+    Border(ug, 20, 44, 340, 1)
+
+    ug.AddText("x20 y54 w340 h20 c" TextColor, "A new version of Fisch Macro Ultimate is available.").SetFont("s10")
+
+    ug.AddText("x20 y80 w80 h20 c" SubColor, "Current:").SetFont("s10")
+    ug.AddText("x104 y80 w250 h20 c" TextColor, FULL_VER).SetFont("s10 bold")
+
+    ug.AddText("x20 y100 w80 h20 c" SubColor, "New:").SetFont("s10")
+    ug.AddText("x104 y100 w250 h20 c" Accent, newVer).SetFont("s10 bold")
+
+    ug.AddText("x20 y124 w340 h30 c" SubColor, "The macro will download and restart automatically.").SetFont("s9")
+
+    updateBtn := button(ug, "Update Now", 20, 164, { w: 155, h: 28, bg: Accent })
+    skipBtn   := button(ug, "Skip",       185, 164, { w: 155, h: 28, bg: BgColor })
+
+    userChoice := ""
+    updateBtn.OnEvent("Click", (*) => (userChoice := "yes", ug.Destroy()))
+    skipBtn.OnEvent("Click",   (*) => (userChoice := "no",  ug.Destroy()))
+    ug.OnEvent("Close",        (*) => (userChoice := "no",  ug.Destroy()))
+
+    ug.Show("w380 h208")
+
+    while (userChoice = "")
+        Sleep(50)
+
+    if (userChoice = "yes")
         DownloadAndInstallFMUUpdate(newVer)
 }
 
