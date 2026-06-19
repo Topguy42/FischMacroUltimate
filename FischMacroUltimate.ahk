@@ -11,7 +11,7 @@
 ; --- Global initialization (Constants.ahk) ---
 
 MAJOR_VER       := "v1"
-FULL_VER        := "v1.1"
+FULL_VER        := "v1.2"
 ROBLOX_VER      := "version-bf6344c9c23446bf"
 ROBLOX_INSTANCE := "RobloxPlayerBeta.exe"
 H_PROCESS       := 0
@@ -61,10 +61,12 @@ HotkeyManager.RegisterAll(SETTINGS)
 
 OnExit(CleanupAndExit)
 
+SetSeDebugPrivilege()
+
 try {
     Initialize()
 } catch as err {
-    MsgBox(err.Message, "Startup Error")
+    ShowAlert(err.Message, "Startup Error")
     ExitApp(1)
 }
 
@@ -79,9 +81,7 @@ Initialize() {
 
     if (rbxPid := GetRobloxPID()) {
         CheckRobloxVersionMismatch(rbxPid)
-
-        if !EnsureRobloxReady(false, true)
-            MsgBox("Roblox was detected, but Macro could not attach. The app will still open. Use Fix Roblox or start the macro again after Roblox is ready.", "Roblox Attachment")
+        EnsureRobloxReady(true, true)  ; showMessage=true → real error shown if attach fails
     }
 
     SetTimer(MacroLoop, MAIN["update_rate"])
@@ -91,6 +91,64 @@ Initialize() {
 
 
 [:: Reload()
+
+; ---------------------------------------------------------------------------
+;  ShowAlert  – themed replacement for MsgBox (OK-only)
+;  ShowAlertYN – themed replacement for MsgBox with Yes/No, returns "Yes"/"No"
+; ---------------------------------------------------------------------------
+ShowAlert(msg, title := "Fisch Macro Ultimate") {
+    global APPEARANCE
+    Accent    := APPEARANCE["accent_color"]
+    BgColor   := APPEARANCE["bg_color"]
+    TextColor := APPEARANCE["text_color"]
+    button.DefaultTextColor := "0x" TextColor
+    button.DefaultBg        := "0x" Accent
+
+    ag := Gui("+AlwaysOnTop +ToolWindow", title)
+    ag.BackColor := "0x" BgColor
+    ag.SetFont(, "Segoe UI")
+
+    ag.AddText("x20 y14 w340 h22 c" Accent, title).SetFont("s11 bold")
+    Border(ag, 20, 40, 340, 1)
+    ag.AddText("x20 y50 w340 h70 c" TextColor, msg).SetFont("s10")
+
+    okBtn := button(ag, "OK", 20, 130, { w: 340, h: 28, bg: Accent })
+    done  := false
+    okBtn.OnEvent("Click", (*) => (done := true, ag.Destroy()))
+    ag.OnEvent("Close",    (*) => (done := true, ag.Destroy()))
+    ag.Show("w380 h174")
+    while !done
+        Sleep(50)
+}
+
+ShowAlertYN(msg, title := "Fisch Macro Ultimate") {
+    global APPEARANCE
+    Accent    := APPEARANCE["accent_color"]
+    BgColor   := APPEARANCE["bg_color"]
+    TextColor := APPEARANCE["text_color"]
+    button.DefaultTextColor := "0x" TextColor
+    button.DefaultBg        := "0x" Accent
+
+    ag := Gui("+AlwaysOnTop +ToolWindow", title)
+    ag.BackColor := "0x" BgColor
+    ag.SetFont(, "Segoe UI")
+
+    ag.AddText("x20 y14 w340 h22 c" Accent, title).SetFont("s11 bold")
+    Border(ag, 20, 40, 340, 1)
+    ag.AddText("x20 y50 w340 h70 c" TextColor, msg).SetFont("s10")
+
+    yesBtn := button(ag, "Yes", 20,  130, { w: 165, h: 28, bg: Accent })
+    noBtn  := button(ag, "No",  195, 130, { w: 165, h: 28, bg: BgColor })
+    choice := "No"
+    yesBtn.OnEvent("Click", (*) => (choice := "Yes", ag.Destroy()))
+    noBtn.OnEvent("Click",  (*) => (choice := "No",  ag.Destroy()))
+    ag.OnEvent("Close",     (*) => (choice := "No",  ag.Destroy()))
+    ag.Show("w380 h174")
+    while WinExist("ahk_id " ag.Hwnd)
+        Sleep(50)
+    return choice
+}
+
 
 
 GetGui() {
@@ -448,7 +506,7 @@ GetGui() {
 
     MainTab.UseTab(4)
         mg.AddText("x10 y30 w300 h100 c" TextColor, "Version " FULL_VER).SetFont("s15 bold italic")
-        mg.AddText("x260 y33 w150 h50 c" TextColor, "June 15, 2026").SetFont("s12 bold")
+        mg.AddText("x260 y33 w150 h50 c" TextColor, "June 19, 2026").SetFont("s12 bold")
 
     ChangelogText := "• Updated for latest Roblox version`n• Improved macro stability and performance`n• General bug fixes"
 
@@ -523,7 +581,7 @@ GetGui() {
 
         if !RegExMatch(value, "^\d+$") {
                 ctrl.Value := MAIN["appraise_delay_ms"]
-                MsgBox("Appraise Delay must be a valid number", "Invalid Appraise Delay")
+                ShowAlert("Appraise Delay must be a valid number", "Invalid Appraise Delay")
                 return
         }
 
@@ -531,7 +589,7 @@ GetGui() {
 
         if (value < 0) {
                 ctrl.Value := MAIN["appraise_delay_ms"]
-                MsgBox("Appraise Delay cannot be a negative.", "Invalid Appraise Delay")
+                ShowAlert("Appraise Delay cannot be a negative.", "Invalid Appraise Delay")
                 return
         }
 
@@ -759,7 +817,7 @@ ApplyAppearanceChanges(appearanceFields, themeDDL := "") {
         if !RegExMatch(raw, "^[0-9A-F]{6}$") {
             field.ctrl.Value := APPEARANCE[field.key]
             field.ctrl.Focus()
-            MsgBox("Please enter a valid 6-character hex color for " field.label " (e.g. FF0000).", "Invalid Color")
+            ShowAlert("Please enter a valid 6-character hex color for " field.label " (e.g. FF0000).", "Invalid Color")
             return
         }
 
@@ -852,10 +910,7 @@ UpdateHotkey(name, ctrl) {
         for actionName, assignedKey in SETTINGS["hotkeys"] {
             if (actionName != name && assignedKey = newKey) {
                 ctrl.Value := oldKey
-                MsgBox(
-                    newKey " is already assigned to " actionNames[actionName] ". Please choose a different key.",
-                    "Hotkey Conflict"
-                )
+                ShowAlert(newKey " is already assigned to " actionNames[actionName] ". Please choose a different key.", "Hotkey Conflict")
                 return
             }
         }
@@ -1393,7 +1448,7 @@ GetAdvSettingsGui() {
 
         if !RegExMatch(rawInterval, "^\d+$") || (rawInterval + 0) < 1 {
             TotemInterval.Value := previousInterval
-            MsgBox("Interval must be a whole number greater than 0.", "Invalid Value")
+            ShowAlert("Interval must be a whole number greater than 0.", "Invalid Value")
             return
         }
 
@@ -1510,7 +1565,7 @@ GetAdvSettingsGui() {
     SendTestWebhook(*) {
         url := Trim(WebhookUrlEdit.Value)
         if (url = "") {
-            MsgBox("Enter a webhook URL first.", "Webhook")
+            ShowAlert("Enter a webhook URL first.", "Webhook")
             return
         }
         try {
@@ -1525,7 +1580,7 @@ GetAdvSettingsGui() {
             TestWebhookBtn.ctrl.Value := "Sent!"
             SetTimer(RevertTestBtn, -1500)
         } catch as err {
-            MsgBox("Failed to send: " err.Message, "Webhook Error")
+            ShowAlert("Failed to send: " err.Message, "Webhook Error")
         }
     }
 
@@ -1537,7 +1592,7 @@ GetAdvSettingsGui() {
         rawInterval := Trim(WebhookInterval.Value)
         if !RegExMatch(rawInterval, "^\d+$") || (rawInterval + 0) < 1 {
             WebhookInterval.Value := MAIN["webhook_summary_interval_min"]
-            MsgBox("Interval must be a whole number greater than 0.", "Invalid Value")
+            ShowAlert("Interval must be a whole number greater than 0.", "Invalid Value")
             return
         }
 
@@ -2244,20 +2299,20 @@ StartAppraiseCycle() {
     global Macro, MAIN
 
     if (!IsAnythingEquipped()) {
-        MsgBox("You have to have a fish selected when appraising.", "Appraisal")
+        ShowAlert("You have to have a fish selected when appraising.", "Appraisal")
         return false
     }
 
     if (!HasAutoAppraiseClickPoint()) {
         SetAppraiseStatus("Set a click point before appraising.")
-        MsgBox("Set a click point in the Appraisal tab before starting.", "Appraisal")
+        ShowAlert("Set a click point in the Appraisal tab before starting.", "Appraisal")
         return false
     }
 
     desiredMutation := Trim(MAIN["auto_appraise_mutation"])
     if (desiredMutation = "") {
         SetAppraiseStatus("Choose a desired mutation.")
-        MsgBox("Choose a desired mutation before starting.", "Appraisal")
+        ShowAlert("Choose a desired mutation before starting.", "Appraisal")
         return false
     }
 
@@ -4389,9 +4444,9 @@ CheckRobloxVersionMismatch(pid) {
         latestHash := GetLatestRobloxVersionHash()
 
         if (runningHash != latestHash)
-            MsgBox("Version mismatch detected.`n`nRunning: " runningHash "`nLatest:  " latestHash, "Version Warning")
+            ShowAlert("Version mismatch detected.`n`nRunning: " runningHash "`nLatest:  " latestHash, "Version Warning")
     } catch as err {
-        MsgBox("Version check failed: " err.Message "`n`nProceeding with re-attach.", "Version Warning")
+        ShowAlert("Version check failed: " err.Message "`n`nProceeding with re-attach.", "Version Warning")
     }
 }
 
@@ -4435,7 +4490,7 @@ FixRoblox() {
         ResetRobloxAttachmentState()
         ClearMacroPhaseCache()
         UpdateRobloxUiState()
-        MsgBox("Roblox not found.")
+        ShowAlert("Roblox not found.", "Fix Roblox")
         return
     }
 
@@ -4446,10 +4501,31 @@ FixRoblox() {
     try {
         AttachToRoblox(pid)
         UpdateRobloxUiState()
-        MsgBox("Roblox attachment refreshed.")
+        ShowAlert("Roblox attachment refreshed.", "Fix Roblox")
     } catch as err {
         UpdateRobloxUiState()
-        MsgBox(err.Message, "Roblox Attachment")
+        ShowAlert(err.Message, "Roblox Attachment")
+    }
+}
+
+SetSeDebugPrivilege() {
+    ; Request SeDebugPrivilege so OpenProcess + ReadProcessMemory can't be
+    ; silently denied by Windows on re-runs after Roblox's protection has
+    ; previously seen this process. Fails gracefully if already held or denied.
+    try {
+        hToken := 0
+        if !DllCall("OpenProcessToken", "Ptr", DllCall("GetCurrentProcess", "Ptr"), "UInt", 0x28, "Ptr*", &hToken)
+            return
+        luid := Buffer(8, 0)
+        DllCall("LookupPrivilegeValue", "Ptr", 0, "Str", "SeDebugPrivilege", "Ptr", luid)
+        tp := Buffer(16, 0)
+        NumPut("UInt",  1,                          tp, 0)   ; PrivilegeCount
+        NumPut("Int64", NumGet(luid, 0, "Int64"),   tp, 4)   ; Luid
+        NumPut("UInt",  2,                          tp, 12)  ; SE_PRIVILEGE_ENABLED
+        DllCall("AdjustTokenPrivileges", "Ptr", hToken, "Int", 0, "Ptr", tp, "UInt", 0, "Ptr", 0, "Ptr", 0)
+        DllCall("CloseHandle", "Ptr", hToken)
+    } catch {
+        ; not critical – continue without it
     }
 }
 
@@ -4734,8 +4810,39 @@ AttachToRoblox(pid := 0) {
             throw Error("Failed to attach to Roblox.")
 
         LoadOffsets()
-        TestAndHealOffsets()
-        ROD := GetHotbarRodName()
+        ; ── Version-aware offsets refresh ─────────────────────────────
+        ; Compare the version tag baked into offsets.json with the running
+        ; Roblox build.  If they differ, try a live fetch straight away so
+        ; the user gets updated offsets automatically without any manual step.
+        ; We still continue even if the fetch fails — the macro will attach
+        ; and the user sees a clear warning rather than a silent failure.
+        ; Version mismatch check — warn if offsets are for a different Roblox build.
+        ; No network call is made. To update, replace settings\offsets.json.
+        global OFFSETS_ROBLOX_VERSION
+        try {
+            runningVer := GetRunningRobloxVersionHash(pid)
+            if (OFFSETS_ROBLOX_VERSION != "" && OFFSETS_ROBLOX_VERSION != runningVer)
+                ShowAlert(
+                    "Offsets may be outdated for your Roblox version.`n"
+                    "  Running:  " runningVer "`n"
+                    "  Offsets:  " OFFSETS_ROBLOX_VERSION "`n`n"
+                    "The macro will still open.`n"
+                    "To fix: replace settings\\offsets.json with updated offsets.",
+                    "Offsets Outdated")
+        } catch {
+            ; Version check failed — proceed with loaded offsets
+        }
+        ; TestAndHealOffsets() is NOT called here — it requires Workspace +
+        ; Players to be in memory, which only exists while inside a game.
+        ; Running it at attach time means any re-attach while on the Roblox
+        ; main menu / loading screen always throws "offsets do not match".
+        ; Offsets are validated lazily by the macro loop when it actually
+        ; needs to read game data.
+        try {
+            ROD := GetHotbarRodName()
+        } catch {
+            ROD := ""  ; not in-game yet — fine, CheckRobloxConnection will update it
+        }
         return true
     } catch as err {
         ResetRobloxAttachmentState()
@@ -4750,7 +4857,7 @@ EnsureRobloxReady(showMessage := true, attemptAttach := true) {
         ResetRobloxAttachmentState()
         UpdateRobloxUiState()
         if showMessage
-            MsgBox("Roblox is not running. Open Roblox first to use this feature.", "Roblox Not Found")
+            ShowAlert("Roblox is not running. Open Roblox first to use this feature.", "Roblox Not Found")
         return false
     }
 
@@ -4761,20 +4868,26 @@ EnsureRobloxReady(showMessage := true, attemptAttach := true) {
 
     if !attemptAttach {
         if showMessage
-            MsgBox("Roblox is not attached. Open Roblox and try again, or press Fix Roblox.", "Roblox Not Attached")
+            ShowAlert("Roblox is not attached. Open Roblox and try again, or press Fix Roblox.", "Roblox Not Attached")
         return false
     }
 
-    try {
-        AttachToRoblox(currentPid)
-        UpdateRobloxUiState()
-        return true
-    } catch as err {
-        UpdateRobloxUiState()
-        if showMessage
-            MsgBox(err.Message, "Roblox Attachment")
-        return false
+    lastErr := ""
+    Loop 3 {
+        try {
+            AttachToRoblox(currentPid)
+            UpdateRobloxUiState()
+            return true
+        } catch as err {
+            lastErr := err.Message
+            if (A_Index < 3)
+                Sleep(800)
+        }
     }
+    UpdateRobloxUiState()
+    if showMessage
+        ShowAlert(lastErr, "Roblox Attachment")
+    return false
 }
 
 GetDataModel() {
@@ -5153,7 +5266,7 @@ FetchRemoteOffsets() {
     _LastRemoteFetchAt := A_TickCount
     _LastRemoteFetchResult := ""
 
-    ; Embedded offsets — no remote fetch needed
+    ; Embedded offsets — no remote fetch
     body := "{`"Source`":`"https://offsets.imtheo.lol`",`"Roblox Version`":`"version-8884371d30284041`",`"Dumper Version`":`"2.1.7`",`"Dumped With`":`"RbxDumperV2`",`"Dumped At`":`"21:03 16/06/2026`",`"Discord`":`"https://offsets.imtheo.lol/discord`",`"Total Offsets`":390,`"Offsets`":{`"PlayerConfigurer`":{`"Pointer`":0},`"TaskScheduler`":{`"Pointer`":135644776,`"JobStart`":200,`"JobEnd`":208,`"JobName`":24,`"MaxFPS`":176},`"VisualEngine`":{`"Pointer`":137274360,`"Dimensions`":2736,`"ViewMatrix`":336,`"RenderView`":3000,`"FakeDataModel`":2704},`"FakeDataModel`":{`"Pointer`":129824424,`"RealDataModel`":472},`"MouseService`":{`"SensitivityPointer`":775,`"InputObject`":264,`"InputObject2`":280,`"MousePosition`":236},`"ScriptContext`":{`"RequireBypass`":0},`"ModuleScript`":{`"IsCoreScript`":0,`"GUID`":232,`"Hash`":352,`"ByteCode`":336},`"RenderView`":{`"LightingValid`":336,`"SkyValid`":653,`"VisualEngine`":16,`"DeviceD3D11`":8},`"Instance`":{`"This`":8,`"Name`":176,`"ChildrenStart`":120,`"ChildrenEnd`":8,`"Parent`":112,`"ClassDescriptor`":24,`"ClassName`":8,`"ClassBase`":3264,`"AttributeContainer`":72,`"AttributeList`":24,`"AttributeToNext`":88,`"AttributeToValue`":24},`"Misc`":{`"StringLength`":16,`"Adornee`":264,`"Value`":208,`"AnimationId`":216},`"MeshContentProvider`":{`"Cache`":232,`"LRUCache`":32,`"MeshData`":64,`"ToMeshData`":64,`"AssetID`":16},`"MeshData`":{`"FaceEnd`":56,`"FaceStart`":48,`"VertexEnd`":8,`"VertexStart`":0},`"DataModel`":{`"PlaceId`":424,`"GameId`":416,`"CreatorId`":408,`"GameLoaded`":1656,`"JobId`":312,`"Workspace`":376,`"ScriptContext`":1088,`"PlaceVersion`":452,`"ServerIP`":1632,`"ToRenderView1`":480,`"ToRenderView2`":8,`"ToRenderView3`":40,`"PrimitiveCount`":1192},`"RunService`":{`"HeartbeatTask`":248,`"HeartbeatFPS`":184},`"RenderJob`":{`"RenderView`":464,`"FakeDataModel`":56,`"RealDataModel`":456},`"Workspace`":{`"World`":1024,`"ReadOnlyGravity`":2536,`"DistributedGameTime`":1224,`"CurrentCamera`":1192},`"World`":{`"Gravity`":528,`"worldStepsPerSec`":1664,`"FallenPartsDestroyHeight`":520,`"AirProperties`":536,`"Primitives`":648},`"AirProperties`":{`"AirDensity`":24,`"GlobalWind`":60},`"Terrain`":{`"GrassLength`":496,`"WaterReflectance`":504,`"WaterTransparency`":508,`"WaterWaveSize`":512,`"WaterWaveSpeed`":516,`"WaterColor`":480,`"MaterialColors`":1184},`"MaterialColors`":{`"Asphalt`":48,`"Basalt`":39,`"Brick`":15,`"Cobblestone`":51,`"Concrete`":12,`"CrackedLava`":45,`"Glacier`":27,`"Grass`":6,`"Ground`":42,`"Ice`":54,`"LeafyGrass`":57,`"Limestone`":63,`"Mud`":36,`"Pavement`":66,`"Rock`":24,`"Salt`":60,`"Sand`":18,`"Sandstone`":33,`"Slate`":9,`"Snow`":30,`"WoodPlanks`":21},`"Sound`":{`"SoundId`":224,`"RollOffMaxDistance`":312,`"RollOffMinDistance`":316,`"PlaybackSpeed`":308,`"Volume`":328,`"SoundGroup`":256,`"Looped`":341},`"SpawnLocation`":{`"AllowTeamChangeOnTouch`":496,`"Enabled`":497,`"Neutral`":498,`"ForcefieldDuration`":488,`"TeamColor`":492},`"SurfaceAppearance`":{`"AlphaMode`":672,`"Color`":648,`"ColorMap`":224,`"EmissiveMaskContent`":272,`"EmissiveStrength`":676,`"EmissiveTint`":660,`"MetalnessMap`":320,`"NormalMap`":368,`"RoughnessMap`":416},`"ParticleEmitter`":{`"Brightness`":564,`"LightEmission`":592,`"LightInfluence`":596,`"Texture`":472,`"ZOffset`":636,`"Lifetime`":524,`"Rate`":608,`"Rotation`":540,`"RotSpeed`":532,`"Speed`":548,`"SpreadAngle`":556,`"Acceleration`":504,`"Drag`":568,`"TimeScale`":628,`"VelocityInheritance`":632},`"Beam`":{`"Brightness`":408,`"LightEmission`":420,`"LightInfluence`":424,`"Texture`":344,`"TextureLength`":436,`"TextureSpeed`":444,`"ZOffset`":456,`"Attachment0`":376,`"Attachment1`":392,`"CurveSize0`":412,`"CurveSize1`":416,`"Width0`":448,`"Width1`":452},`"Player`":{`"LocalPlayer`":328,`"UserId`":760,`"DisplayName`":336,`"HealthDisplayDistance`":892,`"NameDisplayDistance`":908,`"ModelInstance`":976,`"Team`":720,`"TeamColor`":920,`"LocaleId`":304,`"AccountAge`":844,`"MinZoomDistance`":856,`"MaxZoomDistance`":852,`"CameraMode`":860,`"Mouse`":4488},`"Team`":{`"BrickColor`":208},`"Humanoid`":{`"Health`":404,`"MaxHealth`":436,`"Walkspeed`":476,`"WalkspeedCheck`":964,`"JumpPower`":432,`"JumpHeight`":428,`"HipHeight`":416,`"MaxSlopeAngle`":440,`"SeatPart`":288,`"HumanoidRootPart`":1152,`"CameraOffset`":320,`"HealthDisplayDistance`":408,`"NameDisplayDistance`":444,`"DisplayDistanceType`":396,`"HealthDisplayType`":412,`"NameOcclusion`":448,`"DisplayName`":208,`"MoveDirection`":344,`"RigType`":460,`"Jump`":486,`"Sit`":489,`"PlatformStand`":488,`"UseJumpPower`":492,`"AutomaticScalingEnabled`":482,`"BreakJointsOnDeath`":483,`"EvaluateStateMachine`":484,`"RequiresNeck`":489,`"AutoJumpEnabled`":480,`"AutoRotate`":481,`"IsWalking`":2335,`"MoveToPoint`":380,`"MoveToPart`":304,`"WalkTimer`":1040,`"HumanoidState`":2208,`"HumanoidStateID`":32,`"FloorMaterial`":400,`"TargetPoint`":356,`"PlatformStatePointer`":1079774289},`"Seat`":{`"Occupant`":536},`"VehicleSeat`":{`"MaxSpeed`":560,`"SteerFloat`":568,`"ThrottleFloat`":576,`"Torque`":580,`"TurnSpeed`":584},`"StatsItem`":{`"Value`":200},`"Tool`":{`"Tooltip`":1136,`"TextureId`":872,`"Grip`":1204,`"Enabled`":1217,`"CanBeDropped`":1216,`"ManualActivationOnly`":1218,`"RequiresHandle`":1219},`"Clothing`":{`"Template`":280,`"Color3`":312},`"CharacterMesh`":{`"BaseTextureId`":224,`"OverlayTextureId`":320,`"MeshId`":272,`"BodyPart`":352},`"Camera`":{`"Position`":284,`"Rotation`":248,`"CameraSubject`":232,`"FieldOfView`":352,`"ImagePlaneDepth`":752,`"CameraType`":344,`"Viewport`":684,`"ViewportSize`":744},`"BasePart`":{`"Primitive`":328,`"Transparency`":240,`"Color3`":404,`"Shape`":433,`"Massless`":247,`"CastShadow`":245,`"Locked`":246,`"Reflectance`":236},`"Primitive`":{`"Position`":236,`"Validate`":6,`"Owner`":520,`"Size`":440,`"Rotation`":200,`"Flags`":438,`"Material`":0,`"AssemblyLinearVelocity`":248,`"AssemblyAngularVelocity`":260},`"PrimitiveFlags`":{`"Anchored`":2,`"CanCollide`":8,`"CanTouch`":16,`"CanQuery`":32},`"MeshPart`":{`"MeshId`":760,`"Texture`":808},`"Model`":{`"PrimaryPart`":632,`"Scale`":356},`"SpecialMesh`":{`"Scale`":220,`"MeshId`":272},`"Attachment`":{`"Position`":220},`"Weld`":{`"Part0`":304,`"Part1`":320},`"WeldConstraint`":{`"Part0`":208,`"Part1`":224},`"UnionOperation`":{`"AssetId`":752},`"PlayerMouse`":{`"Workspace`":360,`"Icon`":224},`"GuiObject`":{`"ScreenGui_Enabled`":1220,`"Position`":1296,`"Size`":1328,`"Visible`":1453,`"Image`":2440,`"Text`":3488,`"RichText`":2896,`"BackgroundColor3`":1344,`"BorderColor3`":1356,`"TextColor3`":3664,`"LayoutOrder`":1408,`"ZIndex`":411,`"BackgroundTransparency`":1356,`"Rotation`":392},`"GuiBase2D`":{`"AbsoluteSize`":280,`"AbsolutePosition`":272,`"AbsoluteRotation`":392},`"UserInputService`":{`"WindowInputState`":728},`"WindowInputState`":{`"CurrentTextBox`":72,`"CapsLock`":64},`"Textures`":{`"Decal_Texture`":408,`"Texture_Texture`":408},`"Lighting`":{`"ClockTime`":448,`"Brightness`":296,`"EnvironmentDiffuseScale`":300,`"EnvironmentSpecularScale`":304,`"FogStart`":320,`"FogEnd`":316,`"FogColor`":260,`"Ambient`":224,`"OutdoorAmbient`":272,`"ColorShift_Top`":236,`"ColorShift_Bottom`":248,`"ExposureCompensation`":308,`"GeographicLatitude`":408,`"LightColor`":356,`"GradientTop`":344,`"LightDirection`":368,`"GradientBottom`":412,`"GlobalShadows`":336,`"MoonPosition`":396,`"SunPosition`":384,`"Source`":380,`"Sky`":480},`"Sky`":{`"SkyboxBk`":272,`"SkyboxDn`":320,`"SkyboxFt`":368,`"SkyboxLf`":416,`"SkyboxRt`":464,`"SkyboxUp`":512,`"SunAngularSize`":596,`"MoonAngularSize`":604,`"SunTextureId`":560,`"MoonTextureId`":224,`"SkyboxOrientation`":592,`"StarCount`":608},`"Atmosphere`":{`"Density`":232,`"Offset`":244,`"Color`":208,`"Decay`":220,`"Glare`":236,`"Haze`":240},`"BloomEffect`":{`"Intensity`":208,`"Size`":212,`"Threshold`":216,`"Enabled`":200},`"DepthOfFieldEffect`":{`"FocusDistance`":212,`"FarIntensity`":208,`"NearIntensity`":220,`"InFocusRadius`":216,`"Enabled`":200},`"SunRaysEffect`":{`"Intensity`":208,`"Spread`":212,`"Enabled`":200},`"ColorCorrectionEffect`":{`"Brightness`":220,`"Contrast`":224,`"TintColor`":208,`"Enabled`":200},`"ColorGradingEffect`":{`"TonemapperPreset`":208,`"Enabled`":200},`"BlurEffect`":{`"Size`":208,`"Enabled`":200},`"ProximityPrompt`":{`"ActionText`":200,`"ObjectText`":232,`"HoldDuration`":312,`"MaxActivationDistance`":320,`"KeyCode`":316,`"GamepadKeyCode`":308,`"Enabled`":334,`"RequiresLineOfSight`":335},`"ClickDetector`":{`"MaxActivationDistance`":256,`"MouseIcon`":224},`"DragDetector`":{`"ReferenceInstance`":520,`"MaxActivationDistance`":256,`"MaxDragAngle`":704,`"MaxDragTranslation`":644,`"MinDragAngle`":716,`"MinDragTranslation`":656,`"ActivatedCursorIcon`":472,`"CursorIcon`":224,`"MaxForce`":708,`"MaxTorque`":712,`"Responsiveness`":728},`"AnimationTrack`":{`"Animation`":208,`"Animator`":280,`"Speed`":228,`"TimePosition`":232,`"Looped`":245,`"IsPlaying`":2576},`"Animator`":{`"ActiveAnimations`":2184},`"LocalScript`":{`"GUID`":232,`"Hash`":440,`"ByteCode`":424},`"ByteCode`":{`"Size`":32,`"Pointer`":16},`"Script`":{`"GUID`":232,`"Hash`":440,`"ByteCode`":424}}}"
 
     try {
@@ -5168,6 +5281,7 @@ FetchRemoteOffsets() {
     _LastRemoteFetchResult := parsed
     return parsed
 }
+
 BackupAndWriteOffsetsFile(parsed) {
     global OFFSETS_PATH
 
@@ -5212,13 +5326,22 @@ GetProcessBase(pid) {
 
     hMods := Buffer(A_PtrSize * 1024)
     cbNeeded := 0
+    enumResult := 0
 
-    enumResult := DllCall("psapi\EnumProcessModulesEx"
-        , "Ptr", H_PROCESS
-        , "Ptr", hMods.Ptr
-        , "UInt", hMods.Size
-        , "UInt*", &cbNeeded
-        , "UInt", LIST_MODULES_ALL)
+    ; EnumProcessModulesEx can transiently fail right after a handle handoff
+    ; or when the previous macro instance has not fully released resources.
+    ; Retry up to 5 times with a short delay before giving up.
+    Loop 5 {
+        enumResult := DllCall("psapi\EnumProcessModulesEx"
+            , "Ptr", H_PROCESS
+            , "Ptr", hMods.Ptr
+            , "UInt", hMods.Size
+            , "UInt*", &cbNeeded
+            , "UInt", LIST_MODULES_ALL)
+        if enumResult
+            break
+        Sleep(300)
+    }
 
     if !enumResult {
         DllCall("CloseHandle", "Ptr", H_PROCESS)
@@ -5529,7 +5652,7 @@ SaveSettingsFile() {
         file.Write(JSON.stringify(SETTINGS, 4))
         file.Close()
     } catch as err {
-        MsgBox("Failed to save settings: " err.Message, "Settings Error")
+        ShowAlert("Failed to save settings: " err.Message, "Settings Error")
     }
 }
 
@@ -5548,13 +5671,13 @@ ValidateAndSaveMain(key, ctrl, minValue, maxValue, isInteger := false, decimals 
 
     if (rawValue = "") {
         ctrl.Value := FormatSettingValue(oldValue, isInteger, decimals)
-        MsgBox("This field cannot be empty.", "Invalid Value")
+        ShowAlert("This field cannot be empty.", "Invalid Value")
         return
     }
 
     if !RegExMatch(rawValue, "^-?(?:\d+|\d*\.\d+)$") {
         ctrl.Value := FormatSettingValue(oldValue, isInteger, decimals)
-        MsgBox("Please enter a valid number.", "Invalid Value")
+        ShowAlert("Please enter a valid number.", "Invalid Value")
         return
     }
 
@@ -5565,7 +5688,7 @@ ValidateAndSaveMain(key, ctrl, minValue, maxValue, isInteger := false, decimals 
 
     if (numericValue < minValue || numericValue > maxValue) {
         ctrl.Value := FormatSettingValue(oldValue, isInteger, decimals)
-        MsgBox("Value must be between " minValue " and " maxValue ".", "Invalid Range")
+        ShowAlert("Value must be between " minValue " and " maxValue ".", "Invalid Range")
         return
     }
 
@@ -5606,7 +5729,7 @@ SaveConfig(name, useDefaults := false) {
         file.Write(JSON.stringify(data, 4))
         file.Close()
     } catch as err {
-        MsgBox("Failed to save config: " err.Message, "Config Error")
+        ShowAlert("Failed to save config: " err.Message, "Config Error")
     }
 }
 
@@ -5644,7 +5767,7 @@ LoadConfig(name) {
         SaveSettingsFile()
         ReloadMacro()
     } catch as err {
-        MsgBox("Failed to load config: " err.Message, "Config Error")
+        ShowAlert("Failed to load config: " err.Message, "Config Error")
     }
 }
 
@@ -5658,7 +5781,7 @@ DeleteConfig(name) {
             SaveSettingsFile()
         }
     } catch as err {
-        MsgBox("Failed to delete config: " err.Message, "Config Error")
+        ShowAlert("Failed to delete config: " err.Message, "Config Error")
     }
 }
 
@@ -6117,7 +6240,7 @@ DownloadAndInstallFMUUpdate(newVersion) {
         stream.SaveToFile(tempAhk, 2)
         stream.Close()
     } catch as err {
-        MsgBox("Could not download update: " err.Message, "Update Error")
+        ShowAlert("Could not download update: " err.Message, "Update Error")
         return false
     }
 
@@ -6143,7 +6266,7 @@ DownloadAndInstallFMUUpdate(newVersion) {
         f.Write(batchLines)
         f.Close()
     } catch as err {
-        MsgBox("Could not create update helper: " err.Message, "Update Error")
+        ShowAlert("Could not create update helper: " err.Message, "Update Error")
         return false
     }
 
