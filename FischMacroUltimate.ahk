@@ -10,8 +10,8 @@
 
 ; --- Global initialization (Constants.ahk) ---
 
-MAJOR_VER       := "v1"
-FULL_VER        := "v1.2"
+MAJOR_VER       := "v3"
+FULL_VER        := "v3.1"
 ROBLOX_VER      := "version-bf6344c9c23446bf"
 ROBLOX_INSTANCE := "RobloxPlayerBeta.exe"
 H_PROCESS       := 0
@@ -506,7 +506,7 @@ GetGui() {
 
     MainTab.UseTab(4)
         mg.AddText("x10 y30 w300 h100 c" TextColor, "Version " FULL_VER).SetFont("s15 bold italic")
-        mg.AddText("x260 y33 w150 h50 c" TextColor, "June 19, 2026").SetFont("s12 bold")
+        mg.AddText("x260 y33 w150 h50 c" TextColor, "June 15, 2026").SetFont("s12 bold")
 
     ChangelogText := "• Updated for latest Roblox version`n• Improved macro stability and performance`n• General bug fixes"
 
@@ -1238,7 +1238,7 @@ GetAdvSettingsGui() {
 
     SaveCastBtn := button(mg, "Save", 270, 190, {w: 100, h: 23, bg: BgColor, fontSize: 10})
 
-    mg.AddGroupBox("x10 y230 w380 h170 c" TextColor, "Fishing").SetFont("s9 bold")
+    mg.AddGroupBox("x10 y230 w380 h200 c" TextColor, "Fishing").SetFont("s9 bold")
 
     mg.AddText("x20 y255 w130 h20 c" TextColor, "Fishing Action Delay").SetFont("s10")
     FishingActionDelay := mg.AddEdit("x270 y255 w100 h20")
@@ -1258,7 +1258,13 @@ GetAdvSettingsGui() {
     ShakeIntervalHelp.SetFont("underline")
     ShakeIntervalHelp.OnEvent("Click", (*) => InfoPopup.Show("Shake Interval", "How often the macro sends Enter during the shake phase while waiting for the fishing UI to appear. Lower values shake more aggressively, higher values shake less often."))
 
-    SaveFishBtn := button(mg, "Save", 270, 340, {w: 100, h: 23, bg: BgColor, fontSize: 10})
+    mg.AddText("x20 y333 w130 h20 c" TextColor, "Lullaby Mode").SetFont("s10")
+    LullabyMode := mg.AddDDL("x270 y333 w100 h100", ["Prismatic", "Quickening", "Strenghtening", "Resistant", "Fortuitous"])
+    LullabyModeHelp := mg.AddText("x190 y333 w50 h20 c" Accent, "What?")
+    LullabyModeHelp.SetFont("underline")
+    LullabyModeHelp.OnEvent("Click", (*) => InfoPopup.Show("Lullaby Mode", "Select the buff currently active on your Lullaby rod. The macro clicks exactly once per sweep through that buff's scoring window.`n`nPrismatic — edges only (0-20 and 160-180 deg)`nQuickening — left half (0-90 deg)`nStrengtening — centre (76-104 deg)`nResistant — edges + centre (0-20, 76-104, 160-180 deg)`nFortuitous — right half (90-180 deg)"))
+
+    SaveFishBtn := button(mg, "Save", 270, 365, {w: 100, h: 23, bg: BgColor, fontSize: 10})
 
     MainTab.UseTab(2)
     mg.AddGroupBox("x10 y25 w380 h150 c" TextColor, "Settings").SetFont("s9 bold")
@@ -1378,6 +1384,14 @@ GetAdvSettingsGui() {
         FishingActionDelay.Value := MAIN["fishing_action_delay_ms"]
         CompletionThreshold.Value := Format("{:.1f}", MAIN["completion_threshold"]) "%"
         ShakeInterval.Value := MAIN["shake_interval_ms"]
+
+        switch StrLower(MAIN["lullaby_mode"]) {
+            case "quickening":                      LullabyMode.Choose(2)
+            case "strengthening", "strenghtening":  LullabyMode.Choose(3)
+            case "resistant":                       LullabyMode.Choose(4)
+            case "fortuitous":                      LullabyMode.Choose(5)
+            default:                                LullabyMode.Choose(1)
+        }
 
         AutoTotemEnabled.Value := MAIN["auto_totem_enabled"]
                 PublicServerEnabled.Value := MAIN["public_server_enabled"]
@@ -1528,6 +1542,9 @@ GetAdvSettingsGui() {
     }
 
     SaveFishSettings(*) {
+        MAIN["lullaby_mode"] := LullabyMode.Text
+        SETTINGS["main"]["lullaby_mode"] := MAIN["lullaby_mode"]
+
         for key, ctrl in Map(
             "fishing_action_delay_ms", FishingActionDelay,
             "shake_interval_ms", ShakeInterval)
@@ -2808,6 +2825,7 @@ GetDefaultSettings() {
         "fishing_action_delay_ms", 0,
         "completion_threshold", 99.7,
         "shake_interval_ms", 25,
+        "lullaby_mode", "Prismatic",
         "auto_appraise_mutation", "Mythical",
                 "appraise_delay_ms", 100,
         "auto_appraise_click_x", "",
@@ -3105,6 +3123,8 @@ MacroLoop() {
             UpdateFishingPhase()
         case "TRANQUILITY":
             UpdateTranquilityPhase()
+        case "LULLABY":
+            UpdateLullabyPhase()
         case "DONE":
             if (Macro.cycleEnabled)
                 StartMacroCycle()
@@ -3141,6 +3161,8 @@ StartMacroCycle() {
 
     if (IsTranquilityRodText(ROD))
         Controller := TranquilityController()
+    else if (IsLullabyRodText(ROD))
+        Controller := LullabyController()
     else if (IsPinionRodText(ROD))
         Controller := PinionController()
     else
@@ -3581,6 +3603,13 @@ UpdateShakePhase() {
         return
     }
 
+    if (IsLullabyRodText(ROD) && IsMetronomeActive()) {
+        Macro.lastShakedAt := 0
+        Macro.fishingLostAt := 0
+        Macro.phase := "LULLABY"
+        return
+    }
+
     if (HasActiveFishingContext()) {
         Macro.lastShakedAt := 0
         Macro.fishingLostAt := 0
@@ -3684,6 +3713,85 @@ UpdateTranquilityPhase() {
         }
         StopMacroCycle("DONE")
     }
+}
+
+UpdateLullabyPhase() {
+    global Macro, Controller, MAIN
+
+    Macro.powerPercent := ""
+
+    metronomeActive := IsMetronomeActive()
+
+    progress := GetFishingCompletionPercent()
+    Macro.progressPercent := (progress = "" ? "" : Round(progress))
+
+    if (progress != "" && progress >= (MAIN["completion_threshold"] + 0.0))
+        Macro.completionReached := true
+
+    if (Macro.completionReached) {
+        Controller.Reset()
+        if (metronomeActive) {
+            Macro.fishingLostAt := 0
+            return
+        }
+    } else if (metronomeActive) {
+        Macro.fishingLostAt := 0
+        Controller.Update()
+        return
+    }
+
+    Controller.Reset()
+
+    if (!Macro.fishingLostAt)
+        Macro.fishingLostAt := A_TickCount
+
+    if ((A_TickCount - Macro.fishingLostAt) >= Macro.fishingEndGraceMs) {
+        if (!Macro.outcomeResolved) {
+            Macro.outcomeResolved := true
+            if (Macro.completionReached)
+                Macro.fishCaughtCount += 1
+            else
+                Macro.fishLostCount += 1
+        }
+        StopMacroCycle("DONE")
+    }
+}
+
+; --- Lullaby rod metronome helpers -------------------------------------------
+; The Lullaby rod replaces the reel bar with a metronome minigame.
+; Navigation path: reel (ScreenGui) > bar > Details > Metronome > Ticker
+; The Ticker is a rotating needle sweeping 0..180 degrees.
+
+ReadFrameRotation(frameAddr) {
+    global OFFSETS
+
+    if (!frameAddr || !OFFSETS.Has("FrameRotation"))
+        return ""
+
+    return ReadFloat(frameAddr + (OFFSETS["FrameRotation"] + 0))
+}
+
+GetMetronome() {
+    reelGui := GetReelGui()
+    if (!reelGui || !IsReelGuiVisible(reelGui))
+        return 0
+
+    bar := FindChildByName(reelGui, "bar")
+    if (!bar)
+        return 0
+
+    details := FindChildByName(bar, "Details")
+    return details ? FindChildByName(details, "Metronome") : 0
+}
+
+GetMetronomeTicker(metronome := 0) {
+    metronome := metronome ? metronome : GetMetronome()
+    return metronome ? FindChildByName(metronome, "Ticker") : 0
+}
+
+IsMetronomeActive() {
+    ticker := GetMetronomeTicker()
+    return (ticker && ReadGuiObjectVisible(ticker)) ? true : false
 }
 
 HoldMouse() {
@@ -4426,6 +4534,75 @@ class TranquilityController {
     }
 }
 
+; LullabyWindowsFor / LullabyInAnyWindow / LullabyController
+;
+; The Lullaby needle sweeps 0..180. Each buff (selected via the Lullaby Mode
+; dropdown in Advanced Settings) defines the rotation window(s) where the white
+; scoring arc sits. The arc position is baked into the texture and unreadable
+; from memory, so the windows are fixed per buff. Mirrors the GUI spellings,
+; including the intentional "Strenghtening" typo so saves round-trip correctly.
+LullabyWindowsFor(mode) {
+    switch StrLower(Trim(mode)) {
+        case "quickening":                      return [[0.0, 90.0]]
+        case "strengthening", "strenghtening":  return [[76.0, 104.0]]
+        case "fortuitous":                      return [[90.0, 180.0]]
+        case "prismatic":                       return [[0.0, 20.0], [160.0, 180.0]]
+        case "resistant":                       return [[0.0, 20.0], [76.0, 104.0], [160.0, 180.0]]
+        default:                                return []
+    }
+}
+
+; True if the needle rotation falls inside any window. "" and NaN never match.
+LullabyInAnyWindow(rotation, windows) {
+    if (rotation = "" || rotation != rotation)
+        return false
+
+    for w in windows {
+        if (rotation >= w[1] && rotation <= w[2])
+            return true
+    }
+
+    return false
+}
+
+; Clicks once per pass through the active buff's scoring window(s).
+; Single-click-per-pass guard prevents spamming while the needle lingers
+; inside the window, which costs progress.
+class LullabyController {
+    static CLICK_HOLD_MS := 30
+
+    clickedThisPass := false
+
+    Reset() {
+        ReleaseMouse(true)
+        this.clickedThisPass := false
+    }
+
+    Update(ctx := "") {
+        global MAIN
+
+        ticker := GetMetronomeTicker()
+        if (!ticker) {
+            this.clickedThisPass := false
+            return
+        }
+
+        rotation := ReadFrameRotation(ticker)
+        if (!LullabyInAnyWindow(rotation, LullabyWindowsFor(MAIN["lullaby_mode"]))) {
+            ; Needle is outside every window — arm the next pass.
+            this.clickedThisPass := false
+            return
+        }
+
+        if (this.clickedThisPass)
+            return
+
+        Send("{LButton down}")
+        Sleep(LullabyController.CLICK_HOLD_MS)
+        Send("{LButton up}")
+        this.clickedThisPass := true
+    }
+}
 
 
 CheckRobloxVersionMismatch(pid) {
@@ -5153,7 +5330,7 @@ GetHotbarRodDisplayText() {
         if (toolText = "")
             continue
 
-        if (ExtractPureRodName(toolText) != "" || IsPinionRodText(toolText) || IsTranquilityRodText(toolText))
+        if (ExtractPureRodName(toolText) != "" || IsPinionRodText(toolText) || IsTranquilityRodText(toolText) || IsLullabyRodText(toolText))
             return toolText
 
         if (fallback = "")
@@ -5224,6 +5401,14 @@ HasTranquilityHotbarRod() {
     return IsTranquilityRodText(GetHotbarRodDisplayText())
 }
 
+IsLullabyRodText(text) {
+    return InStr(StrLower(NormalizeRodDisplayText(text)), "lullaby") ? true : false
+}
+
+HasLullabyHotbarRod() {
+    return IsLullabyRodText(GetHotbarRodDisplayText())
+}
+
 IsDreambreakerRodText(text) {
     return InStr(StrLower(NormalizeRodDisplayText(text)), "dreambreaker") ? true : false
 }
@@ -5266,8 +5451,7 @@ FetchRemoteOffsets() {
     _LastRemoteFetchAt := A_TickCount
     _LastRemoteFetchResult := ""
 
-    ; Embedded offsets — no remote fetch
-    body := "{`"Source`":`"https://offsets.imtheo.lol`",`"Roblox Version`":`"version-8884371d30284041`",`"Dumper Version`":`"2.1.7`",`"Dumped With`":`"RbxDumperV2`",`"Dumped At`":`"21:03 16/06/2026`",`"Discord`":`"https://offsets.imtheo.lol/discord`",`"Total Offsets`":390,`"Offsets`":{`"PlayerConfigurer`":{`"Pointer`":0},`"TaskScheduler`":{`"Pointer`":135644776,`"JobStart`":200,`"JobEnd`":208,`"JobName`":24,`"MaxFPS`":176},`"VisualEngine`":{`"Pointer`":137274360,`"Dimensions`":2736,`"ViewMatrix`":336,`"RenderView`":3000,`"FakeDataModel`":2704},`"FakeDataModel`":{`"Pointer`":129824424,`"RealDataModel`":472},`"MouseService`":{`"SensitivityPointer`":775,`"InputObject`":264,`"InputObject2`":280,`"MousePosition`":236},`"ScriptContext`":{`"RequireBypass`":0},`"ModuleScript`":{`"IsCoreScript`":0,`"GUID`":232,`"Hash`":352,`"ByteCode`":336},`"RenderView`":{`"LightingValid`":336,`"SkyValid`":653,`"VisualEngine`":16,`"DeviceD3D11`":8},`"Instance`":{`"This`":8,`"Name`":176,`"ChildrenStart`":120,`"ChildrenEnd`":8,`"Parent`":112,`"ClassDescriptor`":24,`"ClassName`":8,`"ClassBase`":3264,`"AttributeContainer`":72,`"AttributeList`":24,`"AttributeToNext`":88,`"AttributeToValue`":24},`"Misc`":{`"StringLength`":16,`"Adornee`":264,`"Value`":208,`"AnimationId`":216},`"MeshContentProvider`":{`"Cache`":232,`"LRUCache`":32,`"MeshData`":64,`"ToMeshData`":64,`"AssetID`":16},`"MeshData`":{`"FaceEnd`":56,`"FaceStart`":48,`"VertexEnd`":8,`"VertexStart`":0},`"DataModel`":{`"PlaceId`":424,`"GameId`":416,`"CreatorId`":408,`"GameLoaded`":1656,`"JobId`":312,`"Workspace`":376,`"ScriptContext`":1088,`"PlaceVersion`":452,`"ServerIP`":1632,`"ToRenderView1`":480,`"ToRenderView2`":8,`"ToRenderView3`":40,`"PrimitiveCount`":1192},`"RunService`":{`"HeartbeatTask`":248,`"HeartbeatFPS`":184},`"RenderJob`":{`"RenderView`":464,`"FakeDataModel`":56,`"RealDataModel`":456},`"Workspace`":{`"World`":1024,`"ReadOnlyGravity`":2536,`"DistributedGameTime`":1224,`"CurrentCamera`":1192},`"World`":{`"Gravity`":528,`"worldStepsPerSec`":1664,`"FallenPartsDestroyHeight`":520,`"AirProperties`":536,`"Primitives`":648},`"AirProperties`":{`"AirDensity`":24,`"GlobalWind`":60},`"Terrain`":{`"GrassLength`":496,`"WaterReflectance`":504,`"WaterTransparency`":508,`"WaterWaveSize`":512,`"WaterWaveSpeed`":516,`"WaterColor`":480,`"MaterialColors`":1184},`"MaterialColors`":{`"Asphalt`":48,`"Basalt`":39,`"Brick`":15,`"Cobblestone`":51,`"Concrete`":12,`"CrackedLava`":45,`"Glacier`":27,`"Grass`":6,`"Ground`":42,`"Ice`":54,`"LeafyGrass`":57,`"Limestone`":63,`"Mud`":36,`"Pavement`":66,`"Rock`":24,`"Salt`":60,`"Sand`":18,`"Sandstone`":33,`"Slate`":9,`"Snow`":30,`"WoodPlanks`":21},`"Sound`":{`"SoundId`":224,`"RollOffMaxDistance`":312,`"RollOffMinDistance`":316,`"PlaybackSpeed`":308,`"Volume`":328,`"SoundGroup`":256,`"Looped`":341},`"SpawnLocation`":{`"AllowTeamChangeOnTouch`":496,`"Enabled`":497,`"Neutral`":498,`"ForcefieldDuration`":488,`"TeamColor`":492},`"SurfaceAppearance`":{`"AlphaMode`":672,`"Color`":648,`"ColorMap`":224,`"EmissiveMaskContent`":272,`"EmissiveStrength`":676,`"EmissiveTint`":660,`"MetalnessMap`":320,`"NormalMap`":368,`"RoughnessMap`":416},`"ParticleEmitter`":{`"Brightness`":564,`"LightEmission`":592,`"LightInfluence`":596,`"Texture`":472,`"ZOffset`":636,`"Lifetime`":524,`"Rate`":608,`"Rotation`":540,`"RotSpeed`":532,`"Speed`":548,`"SpreadAngle`":556,`"Acceleration`":504,`"Drag`":568,`"TimeScale`":628,`"VelocityInheritance`":632},`"Beam`":{`"Brightness`":408,`"LightEmission`":420,`"LightInfluence`":424,`"Texture`":344,`"TextureLength`":436,`"TextureSpeed`":444,`"ZOffset`":456,`"Attachment0`":376,`"Attachment1`":392,`"CurveSize0`":412,`"CurveSize1`":416,`"Width0`":448,`"Width1`":452},`"Player`":{`"LocalPlayer`":328,`"UserId`":760,`"DisplayName`":336,`"HealthDisplayDistance`":892,`"NameDisplayDistance`":908,`"ModelInstance`":976,`"Team`":720,`"TeamColor`":920,`"LocaleId`":304,`"AccountAge`":844,`"MinZoomDistance`":856,`"MaxZoomDistance`":852,`"CameraMode`":860,`"Mouse`":4488},`"Team`":{`"BrickColor`":208},`"Humanoid`":{`"Health`":404,`"MaxHealth`":436,`"Walkspeed`":476,`"WalkspeedCheck`":964,`"JumpPower`":432,`"JumpHeight`":428,`"HipHeight`":416,`"MaxSlopeAngle`":440,`"SeatPart`":288,`"HumanoidRootPart`":1152,`"CameraOffset`":320,`"HealthDisplayDistance`":408,`"NameDisplayDistance`":444,`"DisplayDistanceType`":396,`"HealthDisplayType`":412,`"NameOcclusion`":448,`"DisplayName`":208,`"MoveDirection`":344,`"RigType`":460,`"Jump`":486,`"Sit`":489,`"PlatformStand`":488,`"UseJumpPower`":492,`"AutomaticScalingEnabled`":482,`"BreakJointsOnDeath`":483,`"EvaluateStateMachine`":484,`"RequiresNeck`":489,`"AutoJumpEnabled`":480,`"AutoRotate`":481,`"IsWalking`":2335,`"MoveToPoint`":380,`"MoveToPart`":304,`"WalkTimer`":1040,`"HumanoidState`":2208,`"HumanoidStateID`":32,`"FloorMaterial`":400,`"TargetPoint`":356,`"PlatformStatePointer`":1079774289},`"Seat`":{`"Occupant`":536},`"VehicleSeat`":{`"MaxSpeed`":560,`"SteerFloat`":568,`"ThrottleFloat`":576,`"Torque`":580,`"TurnSpeed`":584},`"StatsItem`":{`"Value`":200},`"Tool`":{`"Tooltip`":1136,`"TextureId`":872,`"Grip`":1204,`"Enabled`":1217,`"CanBeDropped`":1216,`"ManualActivationOnly`":1218,`"RequiresHandle`":1219},`"Clothing`":{`"Template`":280,`"Color3`":312},`"CharacterMesh`":{`"BaseTextureId`":224,`"OverlayTextureId`":320,`"MeshId`":272,`"BodyPart`":352},`"Camera`":{`"Position`":284,`"Rotation`":248,`"CameraSubject`":232,`"FieldOfView`":352,`"ImagePlaneDepth`":752,`"CameraType`":344,`"Viewport`":684,`"ViewportSize`":744},`"BasePart`":{`"Primitive`":328,`"Transparency`":240,`"Color3`":404,`"Shape`":433,`"Massless`":247,`"CastShadow`":245,`"Locked`":246,`"Reflectance`":236},`"Primitive`":{`"Position`":236,`"Validate`":6,`"Owner`":520,`"Size`":440,`"Rotation`":200,`"Flags`":438,`"Material`":0,`"AssemblyLinearVelocity`":248,`"AssemblyAngularVelocity`":260},`"PrimitiveFlags`":{`"Anchored`":2,`"CanCollide`":8,`"CanTouch`":16,`"CanQuery`":32},`"MeshPart`":{`"MeshId`":760,`"Texture`":808},`"Model`":{`"PrimaryPart`":632,`"Scale`":356},`"SpecialMesh`":{`"Scale`":220,`"MeshId`":272},`"Attachment`":{`"Position`":220},`"Weld`":{`"Part0`":304,`"Part1`":320},`"WeldConstraint`":{`"Part0`":208,`"Part1`":224},`"UnionOperation`":{`"AssetId`":752},`"PlayerMouse`":{`"Workspace`":360,`"Icon`":224},`"GuiObject`":{`"ScreenGui_Enabled`":1220,`"Position`":1296,`"Size`":1328,`"Visible`":1453,`"Image`":2440,`"Text`":3488,`"RichText`":2896,`"BackgroundColor3`":1344,`"BorderColor3`":1356,`"TextColor3`":3664,`"LayoutOrder`":1408,`"ZIndex`":411,`"BackgroundTransparency`":1356,`"Rotation`":392},`"GuiBase2D`":{`"AbsoluteSize`":280,`"AbsolutePosition`":272,`"AbsoluteRotation`":392},`"UserInputService`":{`"WindowInputState`":728},`"WindowInputState`":{`"CurrentTextBox`":72,`"CapsLock`":64},`"Textures`":{`"Decal_Texture`":408,`"Texture_Texture`":408},`"Lighting`":{`"ClockTime`":448,`"Brightness`":296,`"EnvironmentDiffuseScale`":300,`"EnvironmentSpecularScale`":304,`"FogStart`":320,`"FogEnd`":316,`"FogColor`":260,`"Ambient`":224,`"OutdoorAmbient`":272,`"ColorShift_Top`":236,`"ColorShift_Bottom`":248,`"ExposureCompensation`":308,`"GeographicLatitude`":408,`"LightColor`":356,`"GradientTop`":344,`"LightDirection`":368,`"GradientBottom`":412,`"GlobalShadows`":336,`"MoonPosition`":396,`"SunPosition`":384,`"Source`":380,`"Sky`":480},`"Sky`":{`"SkyboxBk`":272,`"SkyboxDn`":320,`"SkyboxFt`":368,`"SkyboxLf`":416,`"SkyboxRt`":464,`"SkyboxUp`":512,`"SunAngularSize`":596,`"MoonAngularSize`":604,`"SunTextureId`":560,`"MoonTextureId`":224,`"SkyboxOrientation`":592,`"StarCount`":608},`"Atmosphere`":{`"Density`":232,`"Offset`":244,`"Color`":208,`"Decay`":220,`"Glare`":236,`"Haze`":240},`"BloomEffect`":{`"Intensity`":208,`"Size`":212,`"Threshold`":216,`"Enabled`":200},`"DepthOfFieldEffect`":{`"FocusDistance`":212,`"FarIntensity`":208,`"NearIntensity`":220,`"InFocusRadius`":216,`"Enabled`":200},`"SunRaysEffect`":{`"Intensity`":208,`"Spread`":212,`"Enabled`":200},`"ColorCorrectionEffect`":{`"Brightness`":220,`"Contrast`":224,`"TintColor`":208,`"Enabled`":200},`"ColorGradingEffect`":{`"TonemapperPreset`":208,`"Enabled`":200},`"BlurEffect`":{`"Size`":208,`"Enabled`":200},`"ProximityPrompt`":{`"ActionText`":200,`"ObjectText`":232,`"HoldDuration`":312,`"MaxActivationDistance`":320,`"KeyCode`":316,`"GamepadKeyCode`":308,`"Enabled`":334,`"RequiresLineOfSight`":335},`"ClickDetector`":{`"MaxActivationDistance`":256,`"MouseIcon`":224},`"DragDetector`":{`"ReferenceInstance`":520,`"MaxActivationDistance`":256,`"MaxDragAngle`":704,`"MaxDragTranslation`":644,`"MinDragAngle`":716,`"MinDragTranslation`":656,`"ActivatedCursorIcon`":472,`"CursorIcon`":224,`"MaxForce`":708,`"MaxTorque`":712,`"Responsiveness`":728},`"AnimationTrack`":{`"Animation`":208,`"Animator`":280,`"Speed`":228,`"TimePosition`":232,`"Looped`":245,`"IsPlaying`":2576},`"Animator`":{`"ActiveAnimations`":2184},`"LocalScript`":{`"GUID`":232,`"Hash`":440,`"ByteCode`":424},`"ByteCode`":{`"Size`":32,`"Pointer`":16},`"Script`":{`"GUID`":232,`"Hash`":440,`"ByteCode`":424}}}"
+    body := "{`"Source`":`"https://offsets.imtheo.lol`",`"Roblox Version`":`"version-9ac8595712b447a7`",`"Dumper Version`":`"2.2.4`",`"Dumped With`":`"RbxDumperV2`",`"Dumped At`":`"20:17 20/10/2026`",`"Source Code`":`"https://git.imtheo.lol/theo/RbxDumperV2`",`"Discord`":`"https://offsets.imtheo.lol/discord`",`"Total Offsets`":392,`"Offsets`":{`"TaskScheduler`":{`"Pointer`":149956264,`"JobStart`":200,`"JobEnd`":208,`"JobName`":24,`"MaxFPS`":176},`"VisualEngine`":{`"Pointer`":144556448,`"Dimensions`":2832,`"ViewMatrix`":432,`"RenderView`":3136,`"FakeDataModel`":2800},`"FakeDataModel`":{`"Pointer`":150312976,`"RealDataModel`":504},`"RenderView`":{`"LightingValid`":0,`"SkyValid`":0,`"VisualEngine`":0,`"DeviceD3D11`":0},`"ScriptContext`":{`"RequireBypass`":0},`"ModuleScript`":{`"IsCoreScript`":0,`"GUID`":184,`"Hash`":840,`"ByteCode`":0},`"MouseService`":{`"SensitivityPointer`":0,`"InputObject`":232,`"InputObject2`":248,`"MousePosition`":188},`"PlayerConfigurer`":{`"Pointer`":0},`"Instance`":{`"This`":8,`"NameContainer`":104,`"Name`":0,`"ChildrenStart`":112,`"ChildrenEnd`":8,`"Parent`":96,`"ClassDescriptor`":24,`"ClassName`":8,`"ClassBase`":432},`"Misc`":{`"StringLength`":16,`"Adornee`":216,`"Value`":160,`"AnimationId`":168},`"DataModel`":{`"PlaceId`":384,`"GameId`":376,`"CreatorId`":368,`"GameLoaded`":1480,`"JobId`":264,`"Workspace`":328,`"ScriptContext`":1088,`"PlaceVersion`":412,`"ServerIP`":1456,`"ToRenderView1`":440,`"ToRenderView2`":8,`"ToRenderView3`":40,`"PrimitiveCount`":1040},`"RunService`":{`"HeartbeatTask`":35336,`"HeartbeatFPS`":192},`"RenderJob`":{`"RenderView`":480,`"FakeDataModel`":56,`"RealDataModel`":496},`"Workspace`":{`"World`":1016,`"ReadOnlyGravity`":2504,`"DistributedGameTime`":1216,`"CurrentCamera`":1184},`"World`":{`"Gravity`":544,`"worldStepsPerSec`":2144,`"FallenPartsDestroyHeight`":532,`"AirProperties`":568,`"Primitives`":680},`"AirProperties`":{`"AirDensity`":24,`"GlobalWind`":60},`"Terrain`":{`"GrassLength`":472,`"WaterReflectance`":480,`"WaterTransparency`":484,`"WaterWaveSize`":488,`"WaterWaveSpeed`":492,`"WaterColor`":456,`"MaterialColors`":1184},`"MaterialColors`":{`"Asphalt`":48,`"Basalt`":39,`"Brick`":15,`"Cobblestone`":51,`"Concrete`":12,`"CrackedLava`":45,`"Glacier`":27,`"Grass`":6,`"Ground`":42,`"Ice`":54,`"LeafyGrass`":57,`"Limestone`":63,`"Mud`":36,`"Pavement`":66,`"Rock`":24,`"Salt`":60,`"Sand`":18,`"Sandstone`":33,`"Slate`":9,`"Snow`":30,`"WoodPlanks`":21},`"Sound`":{`"SoundId`":176,`"RollOffMaxDistance`":264,`"RollOffMinDistance`":268,`"PlaybackSpeed`":260,`"Volume`":280,`"SoundGroup`":208,`"IsPlaying`":296,`"Looped`":293},`"SpawnLocation`":{`"AllowTeamChangeOnTouch`":472,`"Enabled`":473,`"Neutral`":474,`"ForcefieldDuration`":464,`"TeamColor`":468},`"SurfaceAppearance`":{`"AlphaMode`":472,`"Color`":448,`"ColorMap`":176,`"EmissiveMaskContent`":224,`"EmissiveStrength`":476,`"EmissiveTint`":460,`"MetalnessMap`":272,`"NormalMap`":320,`"RoughnessMap`":368},`"ParticleEmitter`":{`"Brightness`":516,`"LightEmission`":544,`"LightInfluence`":548,`"Texture`":424,`"ZOffset`":588,`"Lifetime`":476,`"Rate`":560,`"Rotation`":492,`"RotSpeed`":484,`"Speed`":500,`"SpreadAngle`":508,`"Acceleration`":456,`"Drag`":520,`"TimeScale`":580,`"VelocityInheritance`":584},`"Beam`":{`"Brightness`":360,`"LightEmission`":372,`"LightInfluence`":376,`"Texture`":296,`"TextureLength`":388,`"TextureSpeed`":396,`"ZOffset`":408,`"Attachment0`":328,`"Attachment1`":344,`"CurveSize0`":364,`"CurveSize1`":368,`"Width0`":400,`"Width1`":404},`"Player`":{`"LocalPlayer`":280,`"UserId`":184,`"DisplayName`":288,`"HealthDisplayDistance`":908,`"NameDisplayDistance`":924,`"ModelInstance`":656,`"Team`":720,`"TeamColor`":936,`"LocaleId`":256,`"AccountAge`":852,`"MinZoomDistance`":868,`"MaxZoomDistance`":864,`"CameraMode`":872,`"Mouse`":4624},`"Team`":{`"BrickColor`":160},`"Humanoid`":{`"Health`":388,`"MaxHealth`":412,`"Walkspeed`":452,`"WalkspeedCheck`":924,`"JumpPower`":408,`"JumpHeight`":404,`"HipHeight`":392,`"MaxSlopeAngle`":416,`"SeatPart`":240,`"HumanoidRootPart`":1120,`"CameraOffset`":272,`"HealthDisplayDistance`":380,`"NameDisplayDistance`":420,`"DisplayDistanceType`":372,`"HealthDisplayType`":384,`"NameOcclusion`":424,`"DisplayName`":160,`"MoveDirection`":308,`"RigType`":436,`"Jump`":463,`"Sit`":466,`"PlatformStand`":465,`"UseJumpPower`":469,`"AutomaticScalingEnabled`":458,`"BreakJointsOnDeath`":459,`"EvaluateStateMachine`":460,`"RequiresNeck`":466,`"AutoJumpEnabled`":456,`"AutoRotate`":457,`"IsWalking`":2599,`"MoveToPoint`":344,`"MoveToPart`":256,`"WalkTimer`":0,`"HumanoidState`":2216,`"HumanoidStateID`":32,`"FloorMaterial`":376,`"TargetPoint`":320,`"PlatformStatePointer`":1079774289},`"Seat`":{`"Occupant`":512},`"VehicleSeat`":{`"MaxSpeed`":528,`"SteerFloat`":532,`"ThrottleFloat`":536,`"Torque`":540,`"TurnSpeed`":544},`"StatsItem`":{`"Value`":52434},`"Tool`":{`"Tooltip`":1104,`"TextureId`":840,`"Grip`":1172,`"Enabled`":1185,`"CanBeDropped`":1184,`"ManualActivationOnly`":1186,`"RequiresHandle`":1187},`"Clothing`":{`"Template`":232,`"Color3`":264},`"CharacterMesh`":{`"BaseTextureId`":176,`"OverlayTextureId`":272,`"MeshId`":224,`"BodyPart`":304},`"Camera`":{`"Position`":228,`"Rotation`":192,`"CameraSubject`":176,`"FieldOfView`":296,`"ImagePlaneDepth`":716,`"CameraType`":288,`"Viewport`":644,`"ViewportSize`":708},`"BasePart`":{`"Primitive`":376,`"Transparency`":280,`"Color3`":18,`"Shape`":416,`"Massless`":290,`"CastShadow`":288,`"Locked`":289,`"Reflectance`":244},`"Primitive`":{`"Position`":212,`"Validate`":6,`"Owner`":536,`"Size`":452,`"Rotation`":176,`"Flags`":446,`"Material`":0,`"AssemblyLinearVelocity`":224,`"AssemblyAngularVelocity`":236},`"PrimitiveFlags`":{`"Anchored`":2,`"CanCollide`":8,`"CanTouch`":16,`"CanQuery`":32},`"MeshPart`":{`"MeshId`":760,`"Texture`":808},`"Model`":{`"PrimaryPart`":576,`"Scale`":300},`"SpecialMesh`":{`"Scale`":172,`"MeshId`":224},`"Attachment`":{`"Position`":172},`"Weld`":{`"Part0`":256,`"Part1`":272},`"WeldConstraint`":{`"Part0`":160,`"Part1`":176},`"UnionOperation`":{`"AssetId`":760},`"PlayerMouse`":{`"Workspace`":312,`"Icon`":176},`"GuiObject`":{`"ScreenGui_Enabled`":1196,`"Position`":1272,`"Size`":1304,`"Visible`":1429,`"Image`":2520,`"Text`":3640,`"RichText`":3024,`"BackgroundColor3`":1320,`"BorderColor3`":1332,`"TextColor3`":3816,`"LayoutOrder`":1380,`"ZIndex`":1420,`"BackgroundTransparency`":1332,`"Rotation`":208},`"GuiBase2D`":{`"AbsoluteSize`":0,`"AbsolutePosition`":244,`"AbsoluteRotation`":208},`"UserInputService`":{`"WindowInputState`":680},`"WindowInputState`":{`"CurrentTextBox`":72,`"CapsLock`":64},`"Textures`":{`"Decal_Texture`":456,`"Texture_Texture`":456},`"Lighting`":{`"ClockTime`":176,`"Brightness`":256,`"EnvironmentDiffuseScale`":260,`"EnvironmentSpecularScale`":264,`"FogStart`":280,`"FogEnd`":276,`"FogColor`":220,`"Ambient`":184,`"OutdoorAmbient`":232,`"ColorShift_Top`":196,`"ColorShift_Bottom`":208,`"ExposureCompensation`":268,`"GeographicLatitude`":284,`"LightColor`":324,`"GradientTop`":312,`"LightDirection`":336,`"GradientBottom`":376,`"GlobalShadows`":300,`"MoonPosition`":364,`"SunPosition`":352,`"Source`":348,`"Sky`":432},`"Sky`":{`"SkyboxBk`":224,`"SkyboxDn`":272,`"SkyboxFt`":320,`"SkyboxLf`":368,`"SkyboxRt`":416,`"SkyboxUp`":464,`"SunAngularSize`":548,`"MoonAngularSize`":556,`"SunTextureId`":512,`"MoonTextureId`":176,`"SkyboxOrientation`":544,`"StarCount`":560},`"Atmosphere`":{`"Density`":184,`"Offset`":196,`"Color`":160,`"Decay`":172,`"Glare`":188,`"Haze`":192},`"BloomEffect`":{`"Intensity`":160,`"Size`":164,`"Threshold`":168,`"Enabled`":152},`"DepthOfFieldEffect`":{`"FocusDistance`":164,`"FarIntensity`":160,`"NearIntensity`":172,`"InFocusRadius`":168,`"Enabled`":152},`"SunRaysEffect`":{`"Intensity`":160,`"Spread`":164,`"Enabled`":152},`"ColorCorrectionEffect`":{`"Brightness`":172,`"Contrast`":176,`"TintColor`":160,`"Enabled`":152},`"ColorGradingEffect`":{`"TonemapperPreset`":160,`"Enabled`":152},`"BlurEffect`":{`"Size`":160,`"Enabled`":152},`"ProximityPrompt`":{`"ActionText`":152,`"ObjectText`":184,`"HoldDuration`":264,`"MaxActivationDistance`":272,`"KeyCode`":268,`"GamepadKeyCode`":260,`"Enabled`":286,`"RequiresLineOfSight`":287},`"ClickDetector`":{`"MaxActivationDistance`":208,`"MouseIcon`":176},`"DragDetector`":{`"ReferenceInstance`":472,`"MaxActivationDistance`":208,`"MaxDragAngle`":656,`"MaxDragTranslation`":596,`"MinDragAngle`":668,`"MinDragTranslation`":608,`"ActivatedCursorIcon`":424,`"CursorIcon`":176,`"MaxForce`":660,`"MaxTorque`":664,`"Responsiveness`":680},`"AnimationTrack`":{`"Animation`":160,`"Animator`":248,`"Speed`":188,`"TimePosition`":192,`"Looped`":205,`"IsPlaying`":2576},`"Animator`":{`"ActiveAnimations`":2304},`"LocalScript`":{`"GUID`":184,`"Hash`":392,`"ByteCode`":0},`"ByteCode`":{`"Size`":40,`"Pointer`":16},`"Script`":{`"GUID`":184,`"Hash`":392,`"ByteCode`":0},`"MeshContentProvider`":{`"LRUHolder`":192},`"LRUHolder`":{`"MemEnforcedLRUCache`":32},`"MemEnforcedLRUCache`":{`"Head`":8},`"LRUNode`":{`"Next`":0,`"AssetID`":16,`"CachedItem`":64},`"CachedItem`":{`"FileMeshData`":64},`"FileMeshData`":{`"AABBMin`":384,`"AABBMax`":396,`"Vertices`":0,`"VerticesEnd`":8,`"Faces`":48,`"FacesEnd`":56}}}"
 
     try {
         parsed := JSON.parse(body)
